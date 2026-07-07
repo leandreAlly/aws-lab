@@ -8,74 +8,94 @@ Resources:
       GenerateSecretString:
         PasswordLength: 20
         ExcludeCharacters: '"@/\'
+
   S3Group:
     Type: AWS::IAM::Group
     Properties:
       GroupName: s3-group
       Policies:
         - PolicyName: allow-list-buckets
-          PolicyDocument: 
-            Version:  '2012-10-17' 
-            Statement: 
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
               - Effect: Allow
                 Action:
                   - s3:ListAllMyBuckets
                 Resource: '*'
+        - PolicyName: allow-change-own-password
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: iam:GetAccountPasswordPolicy
+                Resource: '*'
+              - Effect: Allow
+                Action: iam:ChangePassword
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:user/${!aws:username}'
+
   EC2Group:
     Type: AWS::IAM::Group
     Properties:
       GroupName: ec2-group
       Policies:
         - PolicyName: allow-list-create-instances
-          PolicyDocument: 
-            Version:  '2012-10-17' 
-            Statement: 
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
               - Effect: Allow
                 Action:
                   - ec2:DescribeInstances
                   - ec2:RunInstances
                 Resource: '*'
+        - PolicyName: allow-change-own-password
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: iam:GetAccountPasswordPolicy
+                Resource: '*'
+              - Effect: Allow
+                Action: iam:ChangePassword
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:user/${!aws:username}'
+
   EC2User1:
-    Type:  AWS::IAM::User
+    Type: AWS::IAM::User
     DependsOn: TempUserPassword
     Properties:
-       UserName: ec2-user1
-       LoginProfile:
-          Password: '{{resolve:secretsmanager:iam-temp-password:SecretString}}'
-          PasswordResetRequired: true
-       Groups:
-         - !Ref EC2Group
+      UserName: ec2-user1
+      LoginProfile:
+        Password: '{{resolve:secretsmanager:iam-temp-password:SecretString}}'
+        PasswordResetRequired: true
+      Groups:
+        - !Ref EC2Group
+
   EC2User2:
-    Type:  AWS::IAM::User
+    Type: AWS::IAM::User
     DependsOn: TempUserPassword
     Properties:
-       UserName: ec2-user2
-       LoginProfile:
-          Password: '{{resolve:secretsmanager:iam-temp-password:SecretString}}'
-          PasswordResetRequired: true
-       Groups:
-         - !Ref EC2Group
-       Policies:
-         - PolicyDocument:
-             Version: '2012-10-17'
-             Statement:
-               - Effect: Deny
-                 Action: 
-                   - ec2:RunInstances
-                 Resource: '*'                 
-                
-           PolicyName: deny-run-instances
+      UserName: ec2-user2
+      LoginProfile:
+        Password: '{{resolve:secretsmanager:iam-temp-password:SecretString}}'
+        PasswordResetRequired: true
+      Groups:
+        - !Ref EC2Group
+      Policies:
+        - PolicyName: deny-run-instances
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Deny
+                Action:
+                  - ec2:RunInstances
+                Resource: '*'
 
   S3User:
-    Type:  AWS::IAM::User
+    Type: AWS::IAM::User
     DependsOn: TempUserPassword
     Properties:
-       UserName: s3-user
-       LoginProfile:
-          Password: '{{resolve:secretsmanager:iam-temp-password:SecretString}}'
-          PasswordResetRequired: true
-       Groups:
-         - !Ref S3Group
-       
-
-
+      UserName: s3-user
+      LoginProfile:
+        Password: '{{resolve:secretsmanager:iam-temp-password:SecretString}}'
+        PasswordResetRequired: true
+      Groups:
+        - !Ref S3Group
