@@ -1,1 +1,3 @@
-template-file-path: ./lab-01/practise.yml
+template-file-path: lab-01/practice.yml
+parameters: {}
+tags: {}
