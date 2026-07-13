@@ -7,8 +7,8 @@ Hands-on AWS labs I'm working through, one directory per lab. Everything is depl
 | # | Lab | Services | What it really taught me |
 |---|-----|----------|--------------------------|
 | 01 | [IAM users, groups and a shared temp password](lab-01/README.md) | IAM, Secrets Manager, CloudFormation GitSync | Explicit Deny beats everything, trust policies control which roles even show up in dropdowns, and one wrong file extension can 404 a whole deployment |
+| 02 | [Testing IAM user permissions (CloudShell + CLI)](lab-02/Tasks.md) | IAM, S3, EC2 | IAM is global, almost everything else is regional; `sts get-caller-identity` and `configure get region` before doubting anything else; a role's trust policy decides *who can assume it*, its permission policies decide *what it can do* |
 
-More labs coming — this table grows as I go.
 
 ## How this repo is organized
 
