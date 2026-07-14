@@ -96,13 +96,16 @@ Resources:
                   - ec2:RunInstances
                 Resource: '*'
 
-  S3User:
-    Type: AWS::IAM::User
-    DependsOn: TempUserPassword
-    Properties:
-      UserName: s3-user
-      LoginProfile:
-        Password: '{{resolve:secretsmanager:iam-temp-password:SecretString}}'
-        PasswordResetRequired: true
-      Groups:
-        - !Ref S3Group
+  # S3User:
+  #   Type: AWS::IAM::User
+  #   DependsOn: TempUserPassword
+  #   Properties:
+  #     UserName: s3-user
+  #     LoginProfile:
+  #       Password: '{{resolve:secretsmanager:iam-temp-password:SecretString}}'
+  #       PasswordResetRequired: true
+  #     Groups:
+  #       - !Ref S3Group
+
+        #NOtesl
+        # it should have an output for good practise.
