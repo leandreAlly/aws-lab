@@ -193,3 +193,62 @@ Resources:
     Properties:
       SubnetId: !Ref PrivateSubnetB
       RouteTableId: !Ref PrivateRouteTableB
+
+  SsmInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lab03-ssm-instance-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: lab03-ssm-instance-role
+
+  SsmInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: lab03-ssm-instance-profile
+      Roles:
+        - !Ref SsmInstanceRole
+
+  PublicInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public web tier - HTTP from anywhere, ICMP echo from inside the VPC
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP from the internet
+        - IpProtocol: icmp
+          FromPort: 8
+          ToPort: -1
+          CidrIp: !Ref VpcCidr
+          Description: ICMP echo request from inside the VPC
+      Tags:
+        - Key: Name
+          Value: lab03-public-sg
+
+  PrivateInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Private app tier - ICMP echo from the public tier only
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: icmp
+          FromPort: 8
+          ToPort: -1
+          SourceSecurityGroupId: !Ref PublicInstanceSecurityGroup
+          Description: ICMP echo request from public web instances
+      Tags:
+        - Key: Name
+          Value: lab03-private-sg
