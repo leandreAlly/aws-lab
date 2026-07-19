@@ -6,6 +6,18 @@ Description: >
   all managed via SSM Session Manager only (no SSH).
 
 Parameters:
+  FullName:
+    Type: String
+    Default: Leandre Tuyambaze
+  LabName:
+    Type: String
+    Default: 'Lab 03 - Securely Deploying Resources in a VPC'
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
   VpcCidr:
     Type: String
     Default: 10.0.0.0/16
@@ -252,3 +264,109 @@ Resources:
       Tags:
         - Key: Name
           Value: lab03-private-sg
+
+  PublicWebInstanceA:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroupIds:
+        - !Ref PublicInstanceSecurityGroup
+      IamInstanceProfile: !Ref SsmInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf install -y httpd
+          TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+          AZ=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+          cat > /var/www/html/index.html <<EOF
+          <html>
+            <head><title>${LabName}</title></head>
+            <body style="font-family: sans-serif; text-align: center; margin-top: 15%">
+              <h1>${FullName}</h1>
+              <h2>${LabName}</h2>
+              <p>Served from availability zone: <strong>$AZ</strong></p>
+            </body>
+          </html>
+          EOF
+          systemctl enable --now httpd
+      Tags:
+        - Key: Name
+          Value: lab03-public-web-a
+
+  PublicWebInstanceB:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PublicSubnetB
+      SecurityGroupIds:
+        - !Ref PublicInstanceSecurityGroup
+      IamInstanceProfile: !Ref SsmInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf install -y httpd
+          TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+          AZ=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+          cat > /var/www/html/index.html <<EOF
+          <html>
+            <head><title>${LabName}</title></head>
+            <body style="font-family: sans-serif; text-align: center; margin-top: 15%">
+              <h1>${FullName}</h1>
+              <h2>${LabName}</h2>
+              <p>Served from availability zone: <strong>$AZ</strong></p>
+            </body>
+          </html>
+          EOF
+          systemctl enable --now httpd
+      Tags:
+        - Key: Name
+          Value: lab03-public-web-b
+
+  PrivateAppInstanceA:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PrivateSubnetA
+      SecurityGroupIds:
+        - !Ref PrivateInstanceSecurityGroup
+      IamInstanceProfile: !Ref SsmInstanceProfile
+      Tags:
+        - Key: Name
+          Value: lab03-private-app-a
+
+  PrivateAppInstanceB:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref PrivateInstanceSecurityGroup
+      IamInstanceProfile: !Ref SsmInstanceProfile
+      Tags:
+        - Key: Name
+          Value: lab03-private-app-b
+
+Outputs:
+  PublicWebUrlA:
+    Description: Web page served by the public instance in AZ a
+    Value: !Sub 'http://${PublicWebInstanceA.PublicIp}'
+  PublicWebUrlB:
+    Description: Web page served by the public instance in AZ b
+    Value: !Sub 'http://${PublicWebInstanceB.PublicIp}'
+  PrivateAppInstanceIdA:
+    Description: Session Manager target - private instance in AZ a
+    Value: !Ref PrivateAppInstanceA
+  PrivateAppInstanceIdB:
+    Description: Session Manager target - private instance in AZ b
+    Value: !Ref PrivateAppInstanceB
+  PrivateAppPrivateIpA:
+    Description: Ping target for the public-to-private connectivity test
+    Value: !GetAtt PrivateAppInstanceA.PrivateIp
+  PrivateAppPrivateIpB:
+    Description: Ping target for the public-to-private connectivity test
+    Value: !GetAtt PrivateAppInstanceB.PrivateIp
