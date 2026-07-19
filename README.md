@@ -8,6 +8,7 @@ Hands-on AWS labs I'm working through, one directory per lab. Everything is depl
 |---|-----|----------|--------------------------|
 | 01 | [IAM users, groups and a shared temp password](lab-01/README.md) | IAM, Secrets Manager, CloudFormation GitSync | Explicit Deny beats everything, trust policies control which roles even show up in dropdowns, and one wrong file extension can 404 a whole deployment |
 | 02 | [Testing IAM user permissions (CloudShell + CLI)](lab-02/Tasks.md) | IAM, S3, EC2 | IAM is global, almost everything else is regional; `sts get-caller-identity` and `configure get region` before doubting anything else; a role's trust policy decides *who can assume it*, its permission policies decide *what it can do* |
+| 03 | [Securely deploying resources in a VPC](lab-03/README.md) | VPC, EC2, NAT Gateway, SSM Session Manager, CloudFormation GitSync | A subnet is public because of its *route table*, not its name; NAT gateways are zonal, so high availability is my job (one per AZ, one private route table per AZ); Session Manager needs zero inbound ports — the agent dials out |
 
 
 ## How this repo is organized
