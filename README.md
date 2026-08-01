@@ -9,6 +9,7 @@ Hands-on AWS labs I'm working through, one directory per lab. Everything is depl
 | 01 | [IAM users, groups and a shared temp password](lab-01/README.md) | IAM, Secrets Manager, CloudFormation GitSync | Explicit Deny beats everything, trust policies control which roles even show up in dropdowns, and one wrong file extension can 404 a whole deployment |
 | 02 | [Testing IAM user permissions (CloudShell + CLI)](lab-02/Tasks.md) | IAM, S3, EC2 | IAM is global, almost everything else is regional; `sts get-caller-identity` and `configure get region` before doubting anything else; a role's trust policy decides *who can assume it*, its permission policies decide *what it can do* |
 | 03 | [Securely deploying resources in a VPC](lab-03/README.md) | VPC, EC2, NAT Gateway, SSM Session Manager, CloudFormation GitSync | A subnet is public because of its *route table*, not its name; NAT gateways are zonal, so high availability is my job (one per AZ, one private route table per AZ); Session Manager needs zero inbound ports — the agent dials out |
+| 04 | [Auto Scaling](lab-04/README.md) | EC2 Auto Scaling, ALB, Launch Templates, Regional NAT Gateway, CloudWatch | Deployed the regional NAT gateway lab-03 only had to explain — 8 egress resources become 3; target tracking is *proportional*, so one instance at 100% CPU jumps straight to max, not one step at a time; a demo load generator must detach, or it dies with the session that started it |
 
 
 ## How this repo is organized
@@ -28,6 +29,7 @@ Each lab is self-contained: its own template, its own deployment file, its own s
 - `cfn-lint` before every push. It catches invalid templates in seconds. It does not catch a valid template doing the wrong thing — that one is on me, and it has bitten me already.
 - One region per lab, chosen deliberately. Half my debugging time in lab 01 was resources being "missing" because the CLI, the console, or I was pointed at the wrong region or the wrong account.
 - Lab stacks get torn down when the lab is done. Secrets Manager secrets need a force-delete if the stack will be recreated soon — deleted secrets linger in a recovery window and block recreation by name.
+- NAT gateways bill by the hour whether or not anything uses them (~$0.045/h each, plus data). They are the most expensive idle resource in these labs, so a finished lab is a deleted stack, not a stopped instance.
 
 ## Recurring lessons (updated as they recur)
 
@@ -36,3 +38,5 @@ Each lab is self-contained: its own template, its own deployment file, its own s
 - A role's trust policy decides *who can assume it*; its permission policies decide *what it can do*. Console dropdowns filter by trust policy, so a role that exists can still be invisible.
 - The console needs far more permissions than the task suggests. A user with only `RunInstances` can't actually use the launch wizard — every dropdown in it is a Describe call that has to be allowed too.
 - Green status means the last operation succeeded, not that the system contains what you think it does. Check the actual inventory (Resources tab, `list-*` commands).
+- GitSync runs as **two different identities**: the sync role that talks to CloudFormation, and the stack execution role that CloudFormation assumes to build the resources. An `AccessDenied` means nothing until you read *which* role it names — they need completely different permissions.
+- Scope IAM policy resources to a *pattern* the next lab will match (`stack/lab-*`), not to one literal name. Every hardcoded resource ARN is a permission error waiting for the next stack.
