@@ -6,6 +6,27 @@ Description: >
   subnets scaling on CPU. No inbound SSH; access via SSM Session Manager.
 
 Parameters:
+  LabName:
+    Type: String
+    Default: 'Lab 04 - Auto Scaling'
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  MinCapacity:
+    Type: Number
+    Default: 1
+  DesiredCapacity:
+    Type: Number
+    Default: 1
+  MaxCapacity:
+    Type: Number
+    Default: 4
+  CpuTargetPercent:
+    Type: Number
+    Default: 30
   VpcCidr:
     Type: String
     Default: 10.1.0.0/16
@@ -236,3 +257,156 @@ Resources:
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
+
+  SsmInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lab04-ssm-instance-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Name
+          Value: lab04-ssm-instance-role
+
+  SsmInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: lab04-ssm-instance-profile
+      Roles:
+        - !Ref SsmInstanceRole
+
+  WebLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: lab04-web-launch-template
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Name: !Ref SsmInstanceProfile
+        SecurityGroupIds:
+          - !Ref InstanceSecurityGroup
+        Monitoring:
+          Enabled: true
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: lab04-web
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -x
+            dnf install -y httpd
+            dnf install -y stress-ng || echo "stress-ng unavailable, using cpu-burn fallback"
+
+            TOKEN=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+            IID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            AZ=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+            LIP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            COLOR=$(echo $IID | md5sum | cut -c1-6)
+
+            cat > /var/www/html/index.html <<EOF
+            <html>
+              <head><title>${LabName}</title></head>
+              <body style="font-family: sans-serif; text-align: center; background:#$COLOR; color:#fff; margin-top: 12%">
+                <h2>${LabName}</h2>
+                <h1>$IID</h1>
+                <p>Availability zone: <strong>$AZ</strong></p>
+                <p>Private IP: <strong>$LIP</strong></p>
+              </body>
+            </html>
+            EOF
+
+            cat > /usr/local/bin/cpu-burn <<'EOF'
+            #!/bin/bash
+            DURATION=$1
+            if [ -z "$DURATION" ]; then DURATION=300; fi
+            CORES=$(nproc)
+            PIDFILE=/run/cpu-burn.pids
+            : > $PIDFILE
+            for i in $(seq 1 $CORES); do
+              setsid timeout $DURATION bash -c 'while :; do :; done' </dev/null >/dev/null 2>&1 &
+              echo $! >> $PIDFILE
+            done
+            echo "burning $CORES vCPU(s) for $DURATION seconds, detached"
+            echo "stop early with: sudo cpu-burn-stop"
+            EOF
+            chmod +x /usr/local/bin/cpu-burn
+
+            cat > /usr/local/bin/cpu-burn-stop <<'EOF'
+            #!/bin/bash
+            PIDFILE=/run/cpu-burn.pids
+            if [ -f $PIDFILE ]; then
+              while read p; do
+                kill -TERM -$p 2>/dev/null || kill -TERM $p 2>/dev/null
+              done < $PIDFILE
+              rm -f $PIDFILE
+            fi
+            echo "cpu-burn stopped"
+            EOF
+            chmod +x /usr/local/bin/cpu-burn-stop
+
+            systemctl enable --now httpd
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: lab04-asg
+      MinSize: !Ref MinCapacity
+      DesiredCapacity: !Ref DesiredCapacity
+      MaxSize: !Ref MaxCapacity
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebLaunchTemplate
+        Version: !GetAtt WebLaunchTemplate.LatestVersionNumber
+      TargetGroupARNs:
+        - !Ref TargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 180
+      DefaultInstanceWarmup: 120
+      MetricsCollection:
+        - Granularity: 1Minute
+      Tags:
+        - Key: Name
+          Value: lab04-web
+          PropagateAtLaunch: true
+
+  CpuTargetTrackingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref CpuTargetPercent
+
+Outputs:
+  AlbUrl:
+    Description: Public endpoint for the application
+    Value: !Sub 'http://${ApplicationLoadBalancer.DNSName}'
+  AutoScalingGroupName:
+    Description: Auto Scaling group to watch during the scale-out demo
+    Value: !Ref AutoScalingGroup
+  TargetGroupFullName:
+    Description: Target group to watch instances register into
+    Value: !GetAtt TargetGroup.TargetGroupFullName
+  RoundRobinTestCommand:
+    Description: Run locally to see requests spread across instances
+    Value: !Sub 'for i in $(seq 1 10); do curl -s http://${ApplicationLoadBalancer.DNSName} | grep -o "i-[0-9a-f]*"; done'
+  StressTestCommand:
+    Description: Run inside a Session Manager session to trigger scale-out
+    Value: 'sudo /usr/local/bin/cpu-burn 600'
