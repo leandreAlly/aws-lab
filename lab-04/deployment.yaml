@@ -1,0 +1,4 @@
+template-file-path: lab-04/practice.yml
+parameters: {}
+tags:
+  lab: lab-04
