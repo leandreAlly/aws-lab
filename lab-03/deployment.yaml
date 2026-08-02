@@ -1,4 +1,3 @@
 template-file-path: lab-03/practice.yml
 parameters: {}
-tags:
-  lab: lab-03
+tags: {}
