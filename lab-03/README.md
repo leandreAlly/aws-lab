@@ -33,6 +33,7 @@ Each private subnet has its **own route table** pointing `0.0.0.0/0` at the NAT 
 
 - **No key pair in the template.** Not just "SSH blocked by security group" — there is no SSH credential in existence. Session Manager works because the SSM agent dials *out* on 443; it needs zero inbound rules, which is also why it works on the private instances (their agent reaches SSM through the NAT).
 - **ICMP rules allow echo request only** (`FromPort: 8`), not all ICMP. For ICMP rules, From/ToPort are reused as type/code. Security groups are stateful, so the echo *reply* needs no rule.
+- **The web tier's ICMP source is `0.0.0.0/0`, not the VPC CIDR.** Scoping it to `10.0.0.0/16` looks tighter but silently breaks the obvious test: ping the IP from the `PublicWebUrlA` output. Traffic addressed to a *public* IP leaves via the IGW even when the sender is inside the VPC, so it arrives with a public source address that the VPC CIDR never matches. A VPC-scoped rule therefore only ever passes pings sent to an instance's *private* IP — which is not what anyone reaches for. Since the tier is already internet-facing on port 80, echo request from anywhere costs nothing extra.
 - **The private tier's ICMP source is the public security group**, not a CIDR — "from any instance wearing that SG" is tighter than the whole VPC range and survives IP changes.
 - **AMI comes from the public SSM parameter** `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`, resolved at deploy time. No hardcoded region-specific AMI ID, no stale images. AL2023 also ships the SSM agent preinstalled.
 - **The web page shows which AZ served it** (via IMDSv2 — AL2023 requires the token flow, plain IMDSv1 GETs are disabled). Opening both URLs side by side is visible proof of the multi-AZ deployment.
@@ -67,7 +68,12 @@ Each private subnet has its **own route table** pointing `0.0.0.0/0` at the NAT 
    ```
    ![Package install and traceroute through the NAT gateway](screenshots/nat-egress-test.png)
 
-5. **Negative test**: `ping` a public instance from the internet fails (ICMP is VPC-scoped), and there is no port 22 to even attempt.
+5. **Internet → public instance ping**, from a laptop, using the IP from the `PublicWebUrlA` output:
+   ```
+   ping -c 3 <PublicWebUrlA IP>
+   ```
+
+6. **Negative test**: the private instances answer neither `ping` nor anything else from the internet — no public IP, no inbound rule for a non-VPC source — and there is no port 22 anywhere to even attempt.
 
 ## Deployed evidence
 

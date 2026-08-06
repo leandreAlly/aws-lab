@@ -233,7 +233,7 @@ Resources:
   PublicInstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Public web tier - HTTP from anywhere, ICMP echo from inside the VPC
+      GroupDescription: Public web tier - HTTP and ICMP echo from anywhere
       VpcId: !Ref Vpc
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -244,8 +244,8 @@ Resources:
         - IpProtocol: icmp
           FromPort: 8
           ToPort: -1
-          CidrIp: !Ref VpcCidr
-          Description: ICMP echo request from inside the VPC
+          CidrIp: 0.0.0.0/0
+          Description: ICMP echo request from the internet
       Tags:
         - Key: Name
           Value: lab03-public-sg
