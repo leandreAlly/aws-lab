@@ -241,11 +241,11 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
           Description: HTTP from the internet
-        - IpProtocol: icmp
-          FromPort: 8
-          ToPort: -1
-          CidrIp: 0.0.0.0/0
-          Description: ICMP echo request from the internet
+        # - IpProtocol: icmp
+        #   FromPort: 8
+        #   ToPort: -1
+        #   CidrIp: 0.0.0.0/0
+        #   Description: ICMP echo request from the internet
       Tags:
         - Key: Name
           Value: lab03-public-sg
