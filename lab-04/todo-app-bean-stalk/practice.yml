@@ -17,7 +17,7 @@ Parameters:
     Default: ''
   SolutionStackName:
     Type: String
-    Default: 64bit Amazon Linux 2023 v6.6.3 running Node.js 22
+    Default: 64bit Amazon Linux 2023 v6.11.5 running Node.js 22
   EnvironmentType:
     Type: String
     Default: SingleInstance
