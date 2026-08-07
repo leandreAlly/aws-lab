@@ -230,6 +230,8 @@ Resources:
     Properties:
       RoleName: lab04-eb-github-actions-role
       MaxSessionDuration: 3600
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess-AWSElasticBeanstalk
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
