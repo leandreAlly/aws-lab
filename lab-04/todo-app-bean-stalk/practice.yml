@@ -279,6 +279,9 @@ Resources:
                   - cloudformation:GetTemplateSummary
                 Resource: '*'
               - Effect: Allow
+                Action: 'autoscaling:*'
+                Resource: !Sub 'arn:${AWS::Partition}:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/awseb-*'
+              - Effect: Allow
                 Action:
                   - ec2:Describe*
                   - autoscaling:Describe*
