@@ -257,6 +257,28 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}'
                   - !Sub 'arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/*'
+        - PolicyName: beanstalk-managed-stack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'cloudformation:*'
+                Resource: !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/awseb-*/*'
+              - Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                  - cloudformation:GetTemplateSummary
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ec2:Describe*
+                  - autoscaling:Describe*
+                  - elasticloadbalancing:Describe*
+                  - cloudwatch:DescribeAlarms
+                  - logs:DescribeLogGroups
+                  - sns:ListTopics
+                  - sns:GetTopicAttributes
+                Resource: '*'
         - PolicyName: deploy-application-versions
           PolicyDocument:
             Version: '2012-10-17'
