@@ -88,7 +88,7 @@ The environment comes up on that bundle. `EnvironmentUrl` in the outputs is the 
 |---|---|---|
 | `AWS_ROLE_ARN` | secret | `GitHubActionsRoleArn` output |
 | `AWS_BUNDLE_BUCKET` | secret | `BundleBucketName` output |
-| `AWS_REGION` | variable | the lab region — **the workflow falls back to `eu-west-1`** |
+| `AWS_REGION` | variable | the lab region — **the workflow falls back to `eu-north-1`** |
 
 Both account-identifying values are secrets rather than variables so the account ID stays out of a public repo's logs.
 

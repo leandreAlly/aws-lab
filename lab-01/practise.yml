@@ -107,5 +107,9 @@ Resources:
   #     Groups:
   #       - !Ref S3Group
 
-        #NOtesl
+        #NOtes
         # it should have an output for good practise.
+        # resources are not tagged 
+        # improve deny policies, user iam permision boundary
+        #Improve iam fundementals 
+        #Inline polify and iam policy
