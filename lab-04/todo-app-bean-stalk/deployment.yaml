@@ -1,0 +1,5 @@
+template-file-path: lab-04/todo-app-bean-stalk/practice.yml
+parameters:
+  InitialBundleKey: ''
+tags:
+  lab: lab-04-beanstalk

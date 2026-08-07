@@ -1,0 +1,438 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Lab 04 (sub-lab) - Elastic Beanstalk continuous delivery.
+  Node.js todo application on a managed Elastic Beanstalk environment,
+  persisting to DynamoDB, with source bundles versioned in S3 and
+  deployed by GitHub Actions through a short-lived OIDC role.
+
+Parameters:
+  ApplicationName:
+    Type: String
+    Default: lab04-todo-app
+  EnvironmentName:
+    Type: String
+    Default: lab04-todo-env
+  CnamePrefix:
+    Type: String
+    Default: ''
+  SolutionStackName:
+    Type: String
+    Default: 64bit Amazon Linux 2023 v6.6.3 running Node.js 22
+  EnvironmentType:
+    Type: String
+    Default: SingleInstance
+    AllowedValues:
+      - SingleInstance
+      - LoadBalanced
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  MinCapacity:
+    Type: Number
+    Default: 1
+  MaxCapacity:
+    Type: Number
+    Default: 2
+  InitialBundleKey:
+    Type: String
+    Default: ''
+  InitialBundleName:
+    Type: String
+    Default: v1-initial
+  GitHubOwner:
+    Type: String
+    Default: leandreAlly
+  GitHubRepo:
+    Type: String
+    Default: aws-lab
+  GitHubBranch:
+    Type: String
+    Default: main
+  CreateOidcProvider:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  VpcId:
+    Type: String
+    Default: ''
+  SubnetIds:
+    Type: String
+    Default: ''
+
+Conditions:
+  ShouldCreateOidcProvider: !Equals [!Ref CreateOidcProvider, 'true']
+  HasInitialBundle: !Not [!Equals [!Ref InitialBundleKey, '']]
+  HasCnamePrefix: !Not [!Equals [!Ref CnamePrefix, '']]
+  IsLoadBalanced: !Equals [!Ref EnvironmentType, 'LoadBalanced']
+  HasCustomVpc: !Not [!Equals [!Ref VpcId, '']]
+
+Resources:
+  BundleBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'lab04-eb-bundles-${AWS::AccountId}-${AWS::Region}'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-bundle-versions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - Key: Name
+          Value: lab04-eb-bundles
+
+  BundleBucketTlsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BundleBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt BundleBucket.Arn
+              - !Sub '${BundleBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+
+  TodoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: lab04-todo-items
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Name
+          Value: lab04-todo-items
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lab04-eb-instance-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: todo-table-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt TodoTable.Arn
+        - PolicyName: read-source-bundles
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${BundleBucket.Arn}/bundles/*'
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt BundleBucket.Arn
+      Tags:
+        - Key: Name
+          Value: lab04-eb-instance-role
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: lab04-eb-instance-profile
+      Roles:
+        - !Ref InstanceRole
+
+  ServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lab04-eb-service-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: elasticbeanstalk.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'sts:ExternalId': elasticbeanstalk
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSElasticBeanstalkEnhancedHealth
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkManagedUpdatesCustomerRolePolicy
+      Tags:
+        - Key: Name
+          Value: lab04-eb-service-role
+
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+      Tags:
+        - Key: Name
+          Value: lab04-github-oidc
+
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lab04-eb-github-actions-role
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - ShouldCreateOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'token.actions.githubusercontent.com:aud': sts.amazonaws.com
+                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubOwner}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}'
+      Policies:
+        - PolicyName: publish-source-bundles
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub '${BundleBucket.Arn}/bundles/*'
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt BundleBucket.Arn
+        - PolicyName: deploy-application-versions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticbeanstalk:CreateApplicationVersion
+                  - elasticbeanstalk:UpdateEnvironment
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:elasticbeanstalk:${AWS::Region}:${AWS::AccountId}:application/${ApplicationName}'
+                  - !Sub 'arn:${AWS::Partition}:elasticbeanstalk:${AWS::Region}:${AWS::AccountId}:applicationversion/${ApplicationName}/*'
+                  - !Sub 'arn:${AWS::Partition}:elasticbeanstalk:${AWS::Region}:${AWS::AccountId}:environment/${ApplicationName}/${EnvironmentName}'
+              - Effect: Allow
+                Action:
+                  - elasticbeanstalk:DescribeApplicationVersions
+                  - elasticbeanstalk:DescribeEnvironments
+                  - elasticbeanstalk:DescribeEnvironmentHealth
+                  - elasticbeanstalk:DescribeEnvironmentResources
+                  - elasticbeanstalk:DescribeEvents
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: lab04-eb-github-actions-role
+
+  Application:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      ApplicationName: !Ref ApplicationName
+      Description: Node.js todo application delivered continuously from GitHub
+      ResourceLifecycleConfig:
+        ServiceRole: !GetAtt ServiceRole.Arn
+        VersionLifecycleConfig:
+          MaxCountRule:
+            Enabled: true
+            MaxCount: 20
+            DeleteSourceFromS3: false
+
+  InitialApplicationVersion:
+    Type: AWS::ElasticBeanstalk::ApplicationVersion
+    Condition: HasInitialBundle
+    Properties:
+      ApplicationName: !Ref Application
+      Description: Initial source bundle uploaded to S3 by hand
+      SourceBundle:
+        S3Bucket: !Ref BundleBucket
+        S3Key: !Ref InitialBundleKey
+
+  Environment:
+    Type: AWS::ElasticBeanstalk::Environment
+    Condition: HasInitialBundle
+    Properties:
+      ApplicationName: !Ref Application
+      EnvironmentName: !Ref EnvironmentName
+      CNAMEPrefix: !If [HasCnamePrefix, !Ref CnamePrefix, !Ref 'AWS::NoValue']
+      SolutionStackName: !Ref SolutionStackName
+      VersionLabel: !Ref InitialApplicationVersion
+      Tier:
+        Name: WebServer
+        Type: Standard
+      OptionSettings:
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: ServiceRole
+          Value: !GetAtt ServiceRole.Arn
+        - Namespace: aws:elasticbeanstalk:environment
+          OptionName: EnvironmentType
+          Value: !Ref EnvironmentType
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value: !Ref InstanceProfile
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: DisableIMDSv1
+          Value: 'true'
+        - Namespace: aws:ec2:instances
+          OptionName: InstanceTypes
+          Value: !Ref InstanceType
+        - Namespace: aws:elasticbeanstalk:healthreporting:system
+          OptionName: SystemType
+          Value: enhanced
+        - Namespace: aws:elasticbeanstalk:application
+          OptionName: Application Healthcheck URL
+          Value: /health
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: TODO_TABLE_NAME
+          Value: !Ref TodoTable
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: NODE_ENV
+          Value: production
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: StreamLogs
+          Value: 'true'
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: DeleteOnTerminate
+          Value: 'true'
+        - Namespace: aws:elasticbeanstalk:cloudwatch:logs
+          OptionName: RetentionInDays
+          Value: '7'
+        - !If
+          - IsLoadBalanced
+          - Namespace: aws:elasticbeanstalk:environment
+            OptionName: LoadBalancerType
+            Value: application
+          - !Ref 'AWS::NoValue'
+        - !If
+          - IsLoadBalanced
+          - Namespace: aws:autoscaling:asg
+            OptionName: MinSize
+            Value: !Ref MinCapacity
+          - !Ref 'AWS::NoValue'
+        - !If
+          - IsLoadBalanced
+          - Namespace: aws:autoscaling:asg
+            OptionName: MaxSize
+            Value: !Ref MaxCapacity
+          - !Ref 'AWS::NoValue'
+        - !If
+          - IsLoadBalanced
+          - Namespace: aws:elasticbeanstalk:command
+            OptionName: DeploymentPolicy
+            Value: Rolling
+          - !Ref 'AWS::NoValue'
+        - !If
+          - IsLoadBalanced
+          - Namespace: aws:elasticbeanstalk:command
+            OptionName: BatchSizeType
+            Value: Percentage
+          - !Ref 'AWS::NoValue'
+        - !If
+          - IsLoadBalanced
+          - Namespace: aws:elasticbeanstalk:command
+            OptionName: BatchSize
+            Value: '50'
+          - !Ref 'AWS::NoValue'
+        - !If
+          - HasCustomVpc
+          - Namespace: aws:ec2:vpc
+            OptionName: VPCId
+            Value: !Ref VpcId
+          - !Ref 'AWS::NoValue'
+        - !If
+          - HasCustomVpc
+          - Namespace: aws:ec2:vpc
+            OptionName: Subnets
+            Value: !Ref SubnetIds
+          - !Ref 'AWS::NoValue'
+        - !If
+          - HasCustomVpc
+          - Namespace: aws:ec2:vpc
+            OptionName: AssociatePublicIpAddress
+            Value: 'true'
+          - !Ref 'AWS::NoValue'
+      Tags:
+        - Key: Name
+          Value: lab04-todo-env
+
+Outputs:
+  EnvironmentUrl:
+    Condition: HasInitialBundle
+    Description: Public Elastic Beanstalk endpoint for the application
+    Value: !If
+      - HasCnamePrefix
+      - !Sub 'http://${CnamePrefix}.${AWS::Region}.elasticbeanstalk.com'
+      - !Sub 'http://${Environment.EndpointURL}'
+  DescribeCnameCommand:
+    Condition: HasInitialBundle
+    Description: Prints the environment CNAME when no CnamePrefix was pinned
+    Value: !Sub 'aws elasticbeanstalk describe-environments --environment-names ${EnvironmentName} --region ${AWS::Region} --query "Environments[0].CNAME" --output text'
+  ApplicationNameOutput:
+    Description: Elastic Beanstalk application name
+    Value: !Ref Application
+  EnvironmentNameOutput:
+    Condition: HasInitialBundle
+    Description: Elastic Beanstalk environment name
+    Value: !Ref Environment
+  BundleBucketName:
+    Description: S3 bucket holding versioned source bundles
+    Value: !Ref BundleBucket
+  TodoTableName:
+    Description: DynamoDB table injected into the environment as TODO_TABLE_NAME
+    Value: !Ref TodoTable
+  GitHubActionsRoleArn:
+    Description: Role GitHub Actions assumes via OIDC - set as the AWS_ROLE_ARN repo variable
+    Value: !GetAtt GitHubActionsRole.Arn
+  UploadInitialBundleCommand:
+    Description: Run after the first deploy to seed the bundle the environment starts from
+    Value: !Sub 'cd lab-04/todo-app-bean-stalk/app && zip -r /tmp/${InitialBundleName}.zip . -x "node_modules/*" && aws s3 cp /tmp/${InitialBundleName}.zip s3://${BundleBucket}/bundles/${InitialBundleName}.zip'
+  ListSolutionStacksCommand:
+    Description: Use this to confirm the exact Node.js platform string before deploying
+    Value: !Sub 'aws elasticbeanstalk list-available-solution-stacks --region ${AWS::Region} --query "SolutionStacks[?contains(@, ''Node.js'')]" --output text'
