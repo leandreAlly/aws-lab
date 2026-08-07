@@ -1,0 +1,187 @@
+name: Deploy todo app to Elastic Beanstalk
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lab-04/todo-app-bean-stalk/app/**'
+      - '.github/workflows/deploy-beanstalk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beanstalk-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_DIR: lab-04/todo-app-bean-stalk/app
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+  EB_APPLICATION: ${{ vars.EB_APPLICATION || 'lab04-todo-app' }}
+  EB_ENVIRONMENT: ${{ vars.EB_ENVIRONMENT || 'lab04-todo-env' }}
+  NODE_VERSION: '22'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ env.APP_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Run the test suite
+        working-directory: ${{ env.APP_DIR }}
+        run: npm test
+
+  deploy:
+    name: Package and deploy
+    runs-on: ubuntu-latest
+    needs: test
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ env.APP_DIR }}/package-lock.json
+
+      - name: Derive the version label
+        id: version
+        run: |
+          echo "label=v${{ github.run_number }}-${{ github.run_attempt }}-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install production dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci --omit=dev
+
+      - name: Stamp the build metadata
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          cat > build-info.json <<EOF
+          {
+            "versionLabel": "${{ steps.version.outputs.label }}",
+            "commit": "${{ github.sha }}",
+            "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat build-info.json
+
+      - name: Package the source bundle
+        id: package
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          BUNDLE="${{ runner.temp }}/${{ steps.version.outputs.label }}.zip"
+          zip -qr "$BUNDLE" . -x "test/*" ".gitignore"
+          echo "path=$BUNDLE" >> "$GITHUB_OUTPUT"
+          unzip -l "$BUNDLE" | tail -1
+
+      - name: Assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: gha-beanstalk-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload the bundle to S3
+        id: upload
+        run: |
+          KEY="bundles/${{ steps.version.outputs.label }}.zip"
+          aws s3 cp "${{ steps.package.outputs.path }}" \
+            "s3://${{ secrets.AWS_BUNDLE_BUCKET }}/$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Create the Elastic Beanstalk application version
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          BUNDLE_BUCKET: ${{ secrets.AWS_BUNDLE_BUCKET }}
+          BUNDLE_KEY: ${{ steps.upload.outputs.key }}
+          VERSION_LABEL: ${{ steps.version.outputs.label }}
+        run: |
+          DESCRIPTION=$(printf '%s' "${COMMIT_MESSAGE:-manual dispatch}" | head -1 | cut -c1-190)
+          aws elasticbeanstalk create-application-version \
+            --application-name "$EB_APPLICATION" \
+            --version-label "$VERSION_LABEL" \
+            --description "$DESCRIPTION" \
+            --source-bundle "S3Bucket=$BUNDLE_BUCKET,S3Key=$BUNDLE_KEY" \
+            --no-auto-create-application
+
+      - name: Deploy the version to the environment
+        run: |
+          aws elasticbeanstalk update-environment \
+            --application-name "$EB_APPLICATION" \
+            --environment-name "$EB_ENVIRONMENT" \
+            --version-label "${{ steps.version.outputs.label }}"
+
+      - name: Wait for the environment to settle
+        run: |
+          aws elasticbeanstalk wait environment-updated \
+            --application-name "$EB_APPLICATION" \
+            --environment-names "$EB_ENVIRONMENT"
+
+      - name: Verify the deployed version is serving
+        id: verify
+        env:
+          VERSION_LABEL: ${{ steps.version.outputs.label }}
+        run: |
+          CNAME=$(aws elasticbeanstalk describe-environments \
+            --application-name "$EB_APPLICATION" \
+            --environment-names "$EB_ENVIRONMENT" \
+            --query "Environments[0].CNAME" --output text)
+          echo "Environment CNAME: $CNAME"
+
+          for attempt in $(seq 1 10); do
+            SERVING=unreachable
+            if curl -fsS --max-time 10 "http://$CNAME/api/version" -o response.json; then
+              SERVING=$(jq -r '.versionLabel // "unknown"' response.json)
+            fi
+
+            if [ "$SERVING" = "$VERSION_LABEL" ]; then
+              echo "url=http://$CNAME" >> "$GITHUB_OUTPUT"
+              echo "Serving $VERSION_LABEL at http://$CNAME"
+              exit 0
+            fi
+
+            echo "attempt $attempt/10: endpoint reports '$SERVING', waiting"
+            sleep 15
+          done
+
+          echo "::error::Environment never reported version $VERSION_LABEL"
+          exit 1
+
+      - name: Summarise the deployment
+        if: always()
+        run: |
+          {
+            echo "### Elastic Beanstalk deployment"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Version label | \`${{ steps.version.outputs.label }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Bundle | \`s3://${{ secrets.AWS_BUNDLE_BUCKET }}/${{ steps.upload.outputs.key }}\` |"
+            echo "| Environment | \`$EB_ENVIRONMENT\` |"
+            echo "| URL | ${{ steps.verify.outputs.url || 'not verified' }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
