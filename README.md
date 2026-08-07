@@ -10,6 +10,7 @@ Hands-on AWS labs I'm working through, one directory per lab. Everything is depl
 | 02 | [Testing IAM user permissions (CloudShell + CLI)](lab-02/Tasks.md) | IAM, S3, EC2 | IAM is global, almost everything else is regional; `sts get-caller-identity` and `configure get region` before doubting anything else; a role's trust policy decides *who can assume it*, its permission policies decide *what it can do* |
 | 03 | [Securely deploying resources in a VPC](lab-03/README.md) | VPC, EC2, NAT Gateway, SSM Session Manager, CloudFormation GitSync | A subnet is public because of its *route table*, not its name; NAT gateways are zonal, so high availability is my job (one per AZ, one private route table per AZ); Session Manager needs zero inbound ports — the agent dials out |
 | 04 | [Auto Scaling](lab-04/README.md) | EC2 Auto Scaling, ALB, Launch Templates, Regional NAT Gateway, CloudWatch | Deployed the regional NAT gateway lab-03 only had to explain — 8 egress resources become 3; target tracking is *proportional*, so one instance at 100% CPU jumps straight to max, not one step at a time; a demo load generator must detach, or it dies with the session that started it |
+| 04b | [Elastic Beanstalk continuous delivery](lab-04/todo-app-bean-stalk/README.md) | Elastic Beanstalk, S3, DynamoDB, GitHub Actions, IAM OIDC | A managed policy whose *name* fits the use case is not one whose *resources* match my names — `AWSElasticBeanstalkWebTier` only covers buckets called `elasticbeanstalk-*`; CloudFormation owning `VersionLabel` means a later stack update silently rolls the app back; `wait environment-updated` returns on Ready, and Ready includes degraded |
 
 
 ## How this repo is organized
@@ -23,6 +24,8 @@ lab-XX/
 ```
 
 Each lab is self-contained: its own template, its own deployment file, its own stack. Deleting a lab is deleting a directory (and its stack).
+
+Lab 04 has a sub-lab, `lab-04/todo-app-bean-stalk/`, which follows the same shape but adds an application: `app/` holds the Node.js source, and the deploy path is split in two. CloudFormation GitSync still owns the infrastructure, while `.github/workflows/deploy-beanstalk.yml` owns application releases. Workflows have to live at the repo root — GitHub won't run them from a subdirectory — so that file is path-filtered to the sub-lab and never fires for the other labs.
 
 ## Conventions I follow
 

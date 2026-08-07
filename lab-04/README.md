@@ -129,6 +129,12 @@ The stress tool is a dependency-free bash busy loop (one per vCPU), not `stress-
 - The `!Sub` brace discipline from lab-03, applied on purpose this time: every shell variable in user data is written brace-free (`$IID`, `$DURATION`) so `!Sub` only ever sees `${LabName}`. The escape hatch, if a literal `${X}` were ever needed, is `${!X}`.
 - A demo load generator should **detach**. The obvious `... & wait` version blocks the Session Manager session and dies with it — the scale-out then stops halfway through, silently.
 
+## Sub-lab: the managed version of this same problem
+
+[`todo-app-bean-stalk/`](todo-app-bean-stalk/README.md) solves the same brief — a public, self-healing web tier — by handing it to Elastic Beanstalk instead of assembling it. Everything above (launch template, ASG, ALB, target group, listener, scaling policy, security groups) collapses into a handful of EB option settings, and the effort moves to the delivery pipeline: a Node.js app on DynamoDB, source bundles versioned in S3, and GitHub Actions deploying on every push through an OIDC role with no stored AWS keys.
+
+Reading the two side by side is the actual lesson. This lab shows what the managed platform is doing for you; the sub-lab shows what you hand over to stop doing it yourself — and where that abstraction leaks (`aws:autoscaling:launchconfiguration` is still the namespace name, years after launch configurations were deprecated).
+
 ## Screenshots
 
 *(added after the live deployment)*

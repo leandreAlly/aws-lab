@@ -428,7 +428,7 @@ Outputs:
     Description: DynamoDB table injected into the environment as TODO_TABLE_NAME
     Value: !Ref TodoTable
   GitHubActionsRoleArn:
-    Description: Role GitHub Actions assumes via OIDC - set as the AWS_ROLE_ARN repo variable
+    Description: Role GitHub Actions assumes via OIDC - set as the AWS_ROLE_ARN repo secret
     Value: !GetAtt GitHubActionsRole.Arn
   UploadInitialBundleCommand:
     Description: Run after the first deploy to seed the bundle the environment starts from
