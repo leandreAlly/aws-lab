@@ -399,8 +399,8 @@ Resources:
             Value: 'true'
           - !Ref 'AWS::NoValue'
       Tags:
-        - Key: Name
-          Value: lab04-todo-env
+        - Key: lab
+          Value: lab-04-beanstalk
 
 Outputs:
   EnvironmentUrl:
