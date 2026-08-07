@@ -248,6 +248,15 @@ Resources:
               - Effect: Allow
                 Action: s3:ListBucket
                 Resource: !GetAtt BundleBucket.Arn
+        - PolicyName: beanstalk-storage-location
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:*
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}'
+                  - !Sub 'arn:${AWS::Partition}:s3:::elasticbeanstalk-${AWS::Region}-${AWS::AccountId}/*'
         - PolicyName: deploy-application-versions
           PolicyDocument:
             Version: '2012-10-17'
