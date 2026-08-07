@@ -1,5 +1,6 @@
 template-file-path: lab-04/todo-app-bean-stalk/practice.yml
 parameters:
   InitialBundleKey: bundles/v1-initial.zip
+  ManageVersionLabel: 'false'
 tags:
   lab: lab-04-beanstalk

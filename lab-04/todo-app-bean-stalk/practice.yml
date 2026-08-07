@@ -39,6 +39,12 @@ Parameters:
   InitialBundleName:
     Type: String
     Default: v1-initial
+  ManageVersionLabel:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
   GitHubOwner:
     Type: String
     Default: leandreAlly
@@ -67,6 +73,9 @@ Conditions:
   HasCnamePrefix: !Not [!Equals [!Ref CnamePrefix, '']]
   IsLoadBalanced: !Equals [!Ref EnvironmentType, 'LoadBalanced']
   HasCustomVpc: !Not [!Equals [!Ref VpcId, '']]
+  ShouldManageVersionLabel: !And
+    - !Not [!Equals [!Ref InitialBundleKey, '']]
+    - !Equals [!Ref ManageVersionLabel, 'true']
 
 Resources:
   BundleBucket:
@@ -334,7 +343,10 @@ Resources:
       EnvironmentName: !Ref EnvironmentName
       CNAMEPrefix: !If [HasCnamePrefix, !Ref CnamePrefix, !Ref 'AWS::NoValue']
       SolutionStackName: !Ref SolutionStackName
-      VersionLabel: !Ref InitialApplicationVersion
+      VersionLabel: !If
+        - ShouldManageVersionLabel
+        - !Ref InitialApplicationVersion
+        - !Ref 'AWS::NoValue'
       Tier:
         Name: WebServer
         Type: Standard
