@@ -58,7 +58,16 @@ The app itself keeps its data store behind an interface (`store/dynamo.js`, `sto
 
 The stack can't be created in one pass, and that's structural rather than sloppy: the environment needs a bundle that lives in a bucket the same stack creates. `InitialBundleKey` gates it.
 
-**1 — First pass.** Push with `deployment.yaml` as committed (`InitialBundleKey: ''`). Creates the bucket, table, roles, OIDC provider and the EB *application*. No environment yet.
+**1 — First pass.** Push with `deployment.yaml` in its fresh-create state:
+```yaml
+parameters:
+  CnamePrefix: lab04-todo-leandre
+  InitialBundleKey: ''
+  ManageVersionLabel: 'true'
+```
+Creates the bucket, table, roles, OIDC provider and the EB *application*. No environment yet.
+
+`CnamePrefix` pins the public URL to `lab04-todo-leandre.<region>.elasticbeanstalk.com` instead of letting EB generate a random one, so the address survives a teardown and rebuild. Beanstalk CNAMEs are globally unique across all AWS accounts, so a taken prefix fails the create — which is why it defaults to empty in the template.
 
 **2 — Confirm the platform string.** From the stack's `ListSolutionStacksCommand` output:
 ```
