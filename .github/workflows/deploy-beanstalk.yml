@@ -17,9 +17,9 @@ concurrency:
 
 env:
   APP_DIR: lab-04/todo-app-bean-stalk/app
-  AWS_REGION: ${{ vars.AWS_REGION || 'eu-north-1' }}
-  EB_APPLICATION: ${{ vars.EB_APPLICATION || 'lab04-todo-app' }}
-  EB_ENVIRONMENT: ${{ vars.EB_ENVIRONMENT || 'lab04-todo-env' }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  EB_APPLICATION: ${{ vars.EB_APPLICATION }}
+  EB_ENVIRONMENT: ${{ vars.EB_ENVIRONMENT }}
   NODE_VERSION: '22'
 
 jobs:
@@ -55,6 +55,25 @@ jobs:
       id-token: write
       contents: read
     steps:
+      - name: Check the deployment configuration is complete
+        env:
+          ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          BUNDLE_BUCKET: ${{ secrets.AWS_BUNDLE_BUCKET }}
+        run: |
+          missing=()
+          [ -n "$AWS_REGION" ] || missing+=("vars.AWS_REGION")
+          [ -n "$EB_APPLICATION" ] || missing+=("vars.EB_APPLICATION")
+          [ -n "$EB_ENVIRONMENT" ] || missing+=("vars.EB_ENVIRONMENT")
+          [ -n "$ROLE_ARN" ] || missing+=("secrets.AWS_ROLE_ARN")
+          [ -n "$BUNDLE_BUCKET" ] || missing+=("secrets.AWS_BUNDLE_BUCKET")
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Not configured for deployment. Missing: ${missing[*]}"
+            exit 1
+          fi
+
+          echo "Deploying $EB_APPLICATION / $EB_ENVIRONMENT in $AWS_REGION"
+
       - name: Check out the repository
         uses: actions/checkout@v4
         with:
