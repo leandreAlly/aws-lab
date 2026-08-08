@@ -1,7 +1,7 @@
 template-file-path: lab-04/todo-app-bean-stalk/practice.yml
 parameters:
   CnamePrefix: lab04-todo-leandre
-  InitialBundleKey: ''
+  InitialBundleKey: bundles/v1-initial.zip
   ManageVersionLabel: 'true'
 tags:
   lab: lab-04-beanstalk
