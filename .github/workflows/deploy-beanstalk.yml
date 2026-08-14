@@ -78,7 +78,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-
+## get the region in arn name since it's inside the arn role
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -145,7 +145,7 @@ jobs:
             --description "$DESCRIPTION" \
             --source-bundle "S3Bucket=$BUNDLE_BUCKET,S3Key=$BUNDLE_KEY" \
             --no-auto-create-application
-
+## if you don't speciffy the version, beanstalk willl pick the latest the version of the application
       - name: Deploy the version to the environment
         run: |
           aws elasticbeanstalk update-environment \

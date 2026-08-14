@@ -15,5 +15,5 @@ if (!tableName) {
 
 createApp({ store }).listen(port, () => {
   const { versionLabel, commit } = getVersionInfo();
-  console.log(`todo-app listening on ${port} | store=${store.kind} | version=${versionLabel} | commit=${commit}`);
+  console.log(`todo-app v2 listening on ${port} | store=${store.kind} | version=${versionLabel} | commit=${commit}`);
 });

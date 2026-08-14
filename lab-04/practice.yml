@@ -99,7 +99,7 @@ Resources:
           Value: lab04-private-subnet-b
 
   InternetGateway:
-    Type: AWS::EC2::InternetGateway
+    Type: AWS::EC2::InternetGateway ## move it after vpc
     Properties:
       Tags:
         - Key: Name

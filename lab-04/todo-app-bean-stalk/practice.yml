@@ -5,6 +5,7 @@ Description: >
   persisting to DynamoDB, with source bundles versioned in S3 and
   deployed by GitHub Actions through a short-lived OIDC role.
 
+
 Parameters:
   ApplicationName:
     Type: String
@@ -484,3 +485,6 @@ Outputs:
   ListSolutionStacksCommand:
     Description: Use this to confirm the exact Node.js platform string before deploying
     Value: !Sub 'aws elasticbeanstalk list-available-solution-stacks --region ${AWS::Region} --query "SolutionStacks[?contains(@, ''Node.js'')]" --output text'
+
+## simplify the github actions 
+## nested template when template is too big which makes it easier ti debug (s3 come in for manage nested template and github action is used to manage them)
