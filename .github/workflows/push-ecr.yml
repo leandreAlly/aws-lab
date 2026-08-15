@@ -1,0 +1,203 @@
+name: Build and push the todo image to ECR
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecr-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_DIR: lab-05/app
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  IMAGE_TAG: leandre_tuyambaze_todoapp
+  NODE_VERSION: '22'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ env.APP_DIR }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Run the test suite
+        working-directory: ${{ env.APP_DIR }}
+        run: npm test
+
+  publish:
+    name: Build and push
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Check the registry configuration is complete
+        env:
+          ROLE_ARN: ${{ secrets.AWS_ECR_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$AWS_REGION" ] || missing+=("vars.AWS_REGION")
+          [ -n "$ECR_REPOSITORY" ] || missing+=("vars.ECR_REPOSITORY")
+          [ -n "$ROLE_ARN" ] || missing+=("secrets.AWS_ECR_ROLE_ARN")
+
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Not configured for ECR. Missing: ${missing[*]}"
+            exit 1
+          fi
+
+          echo "Publishing $ECR_REPOSITORY:$IMAGE_TAG in $AWS_REGION"
+
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Derive the build identifiers
+        id: build
+        run: |
+          set -euo pipefail
+          {
+            echo "sha=$(git rev-parse --short=7 HEAD)"
+            echo "label=v${{ github.run_number }}-${{ github.run_attempt }}-$(git rev-parse --short=7 HEAD)"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Assume the ECR push role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN }}
+          role-session-name: gha-ecr-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build the image
+        id: image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          VERSION_LABEL: ${{ steps.build.outputs.label }}
+          COMMIT: ${{ steps.build.outputs.sha }}
+          BUILT_AT: ${{ steps.build.outputs.built_at }}
+        run: |
+          set -euo pipefail
+          IMAGE="$REGISTRY/$ECR_REPOSITORY"
+          BUILD_TAG="$IMAGE_TAG-$VERSION_LABEL"
+
+          docker build \
+            --build-arg "VERSION_LABEL=$VERSION_LABEL" \
+            --build-arg "COMMIT=$COMMIT" \
+            --build-arg "BUILT_AT=$BUILT_AT" \
+            --tag "$IMAGE:$IMAGE_TAG" \
+            --tag "$IMAGE:$BUILD_TAG" \
+            "$APP_DIR"
+
+          {
+            echo "image=$IMAGE"
+            echo "build_tag=$BUILD_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify the image starts and serves its version
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          VERSION_LABEL: ${{ steps.build.outputs.label }}
+        run: |
+          set -euo pipefail
+          docker run -d --name verify -p 8080:8080 "$IMAGE:$IMAGE_TAG"
+          trap 'docker rm -f verify >/dev/null 2>&1 || true' EXIT
+
+          for attempt in $(seq 1 20); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8080/api/version -o version.json; then
+              SERVING=$(jq -r '.versionLabel' version.json)
+              if [ "$SERVING" = "$VERSION_LABEL" ]; then
+                echo "Image serves $VERSION_LABEL"
+                exit 0
+              fi
+              echo "::error::Image reports '$SERVING', expected '$VERSION_LABEL'"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "::error::Image never became healthy"
+          docker logs verify || true
+          exit 1
+
+      - name: Push the image to Amazon ECR
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          BUILD_TAG: ${{ steps.image.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE:$IMAGE_TAG"
+          docker push "$IMAGE:$BUILD_TAG"
+
+      - name: Report the image digest and scan status
+        id: scan
+        env:
+          BUILD_TAG: ${{ steps.image.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          DIGEST=$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$BUILD_TAG" \
+            --query 'imageDetails[0].imageDigest' --output text)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+          FINDINGS=none
+          for attempt in $(seq 1 10); do
+            STATUS=$(aws ecr describe-images \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-ids "imageDigest=$DIGEST" \
+              --query 'imageDetails[0].imageScanStatus.status' --output text 2>/dev/null || echo PENDING)
+
+            if [ "$STATUS" = "COMPLETE" ]; then
+              FINDINGS=$(aws ecr describe-images \
+                --repository-name "$ECR_REPOSITORY" \
+                --image-ids "imageDigest=$DIGEST" \
+                --query 'imageDetails[0].imageScanFindingsSummary.findingSeverityCounts' --output json)
+              break
+            fi
+            sleep 10
+          done
+
+          echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
+          echo "Scan findings: $FINDINGS"
+
+      - name: Summarise the publish
+        if: always()
+        run: |
+          {
+            echo "### Image published to Amazon ECR"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Repository | \`${{ env.ECR_REPOSITORY }}\` |"
+            echo "| Required tag | \`${{ env.IMAGE_TAG }}\` |"
+            echo "| Build tag | \`${{ steps.image.outputs.build_tag || 'not built' }}\` |"
+            echo "| Digest | \`${{ steps.scan.outputs.digest || 'not pushed' }}\` |"
+            echo "| Scan findings | \`${{ steps.scan.outputs.findings || 'not scanned' }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
