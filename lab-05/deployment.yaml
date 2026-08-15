@@ -1,7 +1,3 @@
 template-file-path: lab-05/practice.yml
-parameters:
-  RepositoryName: leandre-tuyambaze-todo-app
-  ImageTagPrefix: leandre_tuyambaze_todoapp
-  CreateOidcProvider: 'false'
-tags:
-  lab: lab-05-ecr
+parameters: {}
+tags: {}
