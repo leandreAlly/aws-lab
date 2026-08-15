@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Todo — Elastic Beanstalk</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #14171a;
+    --muted: #5c6672;
+    --line: #e2e6ea;
+    --accent: #1f6feb;
+    --ok: #1a7f4b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --card: #171a20;
+      --ink: #e8eaed;
+      --muted: #98a2b0;
+      --line: #262b33;
+      --accent: #58a6ff;
+      --ok: #3fb950;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 4rem;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 42rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  .lede { color: var(--muted); margin: 0 0 1.5rem; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1rem; }
+  .meta div { min-width: 0; }
+  .meta dt { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+  .meta dd { margin: .2rem 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9rem; overflow-wrap: anywhere; }
+  form { display: flex; gap: .5rem; }
+  input[type=text] {
+    flex: 1; min-width: 0; padding: .6rem .75rem; font-size: 1rem;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink);
+  }
+  button {
+    padding: .6rem 1rem; font-size: .95rem; border-radius: 8px; border: 1px solid transparent;
+    background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  ul { list-style: none; margin: 1rem 0 0; padding: 0; }
+  li { display: flex; align-items: center; gap: .75rem; padding: .6rem 0; border-top: 1px solid var(--line); }
+  li:first-child { border-top: 0; }
+  li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  li.done span { text-decoration: line-through; color: var(--muted); }
+  li button { background: none; color: var(--muted); border-color: var(--line); padding: .3rem .6rem; font-size: .8rem; }
+  .empty, .error { color: var(--muted); margin: 1rem 0 0; }
+  .error { color: #c1121f; }
+  .badge { display: inline-block; padding: .15rem .5rem; border-radius: 999px; background: var(--ok); color: #fff; font-size: .7rem; letter-spacing: .04em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Todo-V2 <span class="badge" id="store-badge">checking…</span></h1>
+  <p class="lede">Running on AWS Elastic Beanstalk in eu-north-1, persisting to DynamoDB. Deployed by GitHub Actions.</p>
+
+  <section class="card">
+    <dl class="meta">
+      <div><dt>Version label</dt><dd id="m-version">…</dd></div>
+      <div><dt>Commit</dt><dd id="m-commit">…</dd></div>
+      <div><dt>Built at</dt><dd id="m-built">…</dd></div>
+      <div><dt>Table</dt><dd id="m-table">…</dd></div>
+    </dl>
+  </section>
+
+  <section class="card">
+    <form id="new-todo">
+      <input type="text" id="title" placeholder="What needs doing?" maxlength="200" autocomplete="off" required>
+      <button type="submit">Add</button>
+    </form>
+    <ul id="list"></ul>
+    <p class="empty" id="empty" hidden>Nothing here yet.</p>
+    <p class="error" id="error" hidden></p>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const errorBox = $('error');
+
+function showError(message) {
+  errorBox.textContent = message;
+  errorBox.hidden = !message;
+}
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `request failed (${response.status})`);
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+function render(items) {
+  const list = $('list');
+  list.replaceChildren();
+  $('empty').hidden = items.length > 0;
+
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.className = item.done ? 'done' : '';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = Boolean(item.done);
+    checkbox.addEventListener('change', () => mutate(
+      () => api(`/api/todos/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ done: checkbox.checked }),
+      })
+    ));
+
+    const label = document.createElement('span');
+    label.textContent = item.title;
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'Delete';
+    remove.addEventListener('click', () => mutate(
+      () => api(`/api/todos/${item.id}`, { method: 'DELETE' })
+    ));
+
+    li.append(checkbox, label, remove);
+    list.append(li);
+  }
+}
+
+async function refresh() {
+  const { items } = await api('/api/todos');
+  render(items);
+}
+
+async function mutate(action) {
+  try {
+    showError('');
+    await action();
+    await refresh();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+$('new-todo').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const input = $('title');
+  const title = input.value.trim();
+  if (!title) return;
+
+  mutate(async () => {
+    await api('/api/todos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+    input.value = '';
+  });
+});
+
+(async function init() {
+  try {
+    const version = await api('/api/version');
+    $('m-version').textContent = version.versionLabel;
+    $('m-commit').textContent = version.commit.slice(0, 12);
+    $('m-built').textContent = version.builtAt || 'not built by CI';
+
+    const health = await api('/api/health/store');
+    $('m-table').textContent = health.table || 'in-memory (no table)';
+    $('store-badge').textContent = health.store;
+
+    await refresh();
+  } catch (error) {
+    $('store-badge').textContent = 'error';
+    showError(error.message);
+  }
+})();
+</script>
+</body>
+</html>
