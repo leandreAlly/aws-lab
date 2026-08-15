@@ -1,0 +1,17 @@
+node_modules
+npm-debug.log*
+build-info.json
+*.zip
+
+test
+
+.git
+.gitignore
+.dockerignore
+Dockerfile
+README.md
+
+.env
+.env.*
+*.pem
+.aws
