@@ -1,0 +1,189 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Lab 05 - Push a Docker image to Amazon ECR.
+  A private ECR repository with scan-on-push, encryption, a lifecycle policy
+  and a repository policy, plus the GitHub Actions OIDC role that is the only
+  identity allowed to push images into it.
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: leandre-tuyambaze-todo-app
+    AllowedPattern: '[a-z0-9][a-z0-9._/-]*'
+  ImageTagPrefix:
+    Type: String
+    Default: leandre_tuyambaze_todoapp
+  GitHubOwner:
+    Type: String
+    Default: leandreAlly
+  GitHubRepo:
+    Type: String
+    Default: aws-lab
+  RoleName:
+    Type: String
+    Default: lab05-github-ecr-push
+  CreateOidcProvider:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+  UntaggedImageExpiryDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 365
+  MaxTaggedImages:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 1000
+
+Conditions:
+  ShouldCreateOidcProvider: !Equals [!Ref CreateOidcProvider, 'true']
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+      Tags:
+        - Key: Name
+          Value: github-actions-oidc
+        - Key: lab
+          Value: lab-05-ecr
+
+  GitHubActionsEcrRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: !Sub 'Lets GitHub Actions in ${GitHubOwner}/${GitHubRepo} push images to the ${RepositoryName} ECR repository'
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - ShouldCreateOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOwner}/${GitHubRepo}:*'
+      Policies:
+        - PolicyName: EcrPush
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AuthenticateToRegistry
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: PushToLabRepositoryOnly
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:DescribeImages
+                Resource: !Sub 'arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/${RepositoryName}'
+      Tags:
+        - Key: lab
+          Value: lab-05-ecr
+        - Key: ManagedBy
+          Value: cloudformation-gitsync
+
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      ImageTagMutability: MUTABLE
+      EmptyOnDelete: true
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Expire untagged images after ${UntaggedImageExpiryDays} days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": ${UntaggedImageExpiryDays}
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep only the ${MaxTaggedImages} most recent build images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["${ImageTagPrefix}"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${MaxTaggedImages}
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowGitHubActionsRoleToPush
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt GitHubActionsEcrRole.Arn
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+              - ecr:PutImage
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+              - ecr:DescribeImages
+      Tags:
+        - Key: lab
+          Value: lab-05-ecr
+        - Key: Application
+          Value: todo-app
+        - Key: Owner
+          Value: leandre-tuyambaze
+        - Key: ManagedBy
+          Value: cloudformation-gitsync
+
+Outputs:
+  RepositoryName:
+    Description: Name of the private ECR repository
+    Value: !Ref EcrRepository
+  RepositoryUri:
+    Description: URI to tag and push images to
+    Value: !GetAtt EcrRepository.RepositoryUri
+  RepositoryArn:
+    Description: ARN of the private ECR repository
+    Value: !GetAtt EcrRepository.Arn
+  RepositoryConsoleUrl:
+    Description: Console link to the repository, for the lab deliverable
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/ecr/repositories/private/${AWS::AccountId}/${RepositoryName}?region=${AWS::Region}'
+  GitHubActionsRoleArn:
+    Description: Role ARN for the aws-actions/configure-aws-credentials step
+    Value: !GetAtt GitHubActionsEcrRole.Arn
